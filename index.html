@@ -84,18 +84,21 @@ h1 {
   opacity: 0.8;
 }
 
-.progress-circle {
-  width: 54px;
-  height: 54px;
-  border-radius: 50%;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  color: var(--text-primary);
-  background: conic-gradient(var(--pink-500) 0deg, rgba(255,255,255,0.2) 0deg);
-  box-shadow: 0 8px 20px rgba(0,0,0,0.12);
-}
+  #statusBox {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+
+  .status-item {
+    padding: 8px 12px;
+    border-radius: 14px;
+    background: var(--card-bg);
+    box-shadow: 0 8px 18px rgba(0,0,0,0.08);
+    font-weight: 700;
+    color: var(--text-primary);
+    font-size: 13px;
+  }
 
 .card {
   margin-top: 24px;
@@ -178,9 +181,12 @@ body.dark li {
   <div class="header">
     <div>
       <div class="date">Today</div>
-      <h1 id="todayDate"></h1>
-    </div>
-    <div class="progress-circle" id="progressCircle">0%</div>
+        <h1 id="todayDate"></h1>
+      </div>
+      <div id="statusBox">
+        <div class="status-item" id="dailyCount">0/0</div>
+        <div class="status-item" id="weeklyStreak">Streak: 0</div>
+      </div>
     <div class="toggle" onclick="toggleDarkMode()">☀︎ / ☾</div>
   </div>
 
@@ -203,6 +209,9 @@ body.dark li {
 <script>
 let habits = JSON.parse(localStorage.getItem("habits")) || [];
 
+// normalize older entries
+habits = habits.map(h => ({ ...h, completions: h.completions || [] }));
+
 function saveHabits() {
   localStorage.setItem("habits", JSON.stringify(habits));
 }
@@ -213,7 +222,8 @@ function addHabit() {
   const startDate = document.getElementById("startDate").value;
   const endDate = document.getElementById("endDate").value;
 
-  if (!name || !startDate || !endDate) return;
+  // startDate and endDate are optional now — only name is required
+  if (!name) return;
 
   habits.push({
     id: Date.now(),
@@ -221,7 +231,7 @@ function addHabit() {
     category,
     startDate,
     endDate,
-    completed: false
+    completions: []
   });
 
   document.getElementById("habitName").value = "";
@@ -230,9 +240,15 @@ function addHabit() {
 }
 
 function toggleHabit(id) {
-  habits = habits.map(h =>
-    h.id === id ? { ...h, completed: !h.completed } : h
-  );
+  const today = getISODate(new Date());
+  habits = habits.map(h => {
+    if (h.id !== id) return h;
+    const hasToday = (h.completions || []).includes(today);
+    const completions = new Set(h.completions || []);
+    if (hasToday) completions.delete(today);
+    else completions.add(today);
+    return { ...h, completions: Array.from(completions) };
+  });
   saveHabits();
   renderHabits();
 }
@@ -241,38 +257,103 @@ function renderHabits() {
   const list = document.getElementById("habitList");
   list.innerHTML = "";
 
-  let completedCount = 0;
+  const today = getISODate(new Date());
+  let completedTodayCount = 0;
 
   habits.forEach(habit => {
     const li = document.createElement("li");
     li.draggable = true;
     li.dataset.id = habit.id;
 
+    const doneToday = (habit.completions || []).includes(today);
+
+    const meta = formatHabitMeta(habit);
     li.innerHTML = `
-      <div class="${habit.completed ? 'completed' : ''}"
+      <div class="${doneToday ? 'completed' : ''}"
         onclick="toggleHabit(${habit.id})">
         <strong>${habit.name}</strong>
         <div class="meta">
-          ${habit.category} • ${habit.startDate} → ${habit.endDate}
+          ${meta}
         </div>
       </div>
     `;
 
-    if (habit.completed) completedCount++;
+    if (doneToday) completedTodayCount++;
 
     addDragEvents(li);
     list.appendChild(li);
   });
 
-  updateProgress(completedCount);
+  updateStatus(completedTodayCount);
 }
 
-function updateProgress(completedCount) {
-  const circle = document.getElementById("progressCircle");
-  const percentage = habits.length === 0 ? 0 : Math.round((completedCount / habits.length) * 100);
-  circle.innerText = percentage + "%";
-  circle.style.background =
-    `conic-gradient(var(--pink-500) ${percentage * 3.6}deg, rgba(255,255,255,0.2) 0deg)`;
+function updateStatus(completedTodayCount) {
+  const dailyEl = document.getElementById("dailyCount");
+  const streakEl = document.getElementById("weeklyStreak");
+  dailyEl.innerText = `${completedTodayCount}/${habits.length}`;
+  const streak = computeWeeklyStreak();
+  streakEl.innerText = `Streak: ${streak}`;
+}
+
+// Helpers
+function getISODate(d) {
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate()).toISOString().slice(0,10);
+}
+
+function getAllCompletedDatesSet() {
+  const s = new Set();
+  habits.forEach(h => (h.completions || []).forEach(d => s.add(d)));
+  return s;
+}
+
+function formatHabitMeta(habit) {
+  const parts = [];
+  if (habit.category) parts.push(habit.category);
+  const dates = [];
+  if (habit.startDate) dates.push(habit.startDate);
+  if (habit.endDate) dates.push(habit.endDate);
+  if (dates.length) parts.push(dates.join(' → '));
+  return parts.join(' • ');
+}
+
+function startOfWeekDate(date) {
+  const d = new Date(date);
+  // make Monday the first day of week
+  const day = (d.getDay() + 6) % 7;
+  d.setDate(d.getDate() - day);
+  d.setHours(0,0,0,0);
+  return d;
+}
+
+// Compute weekly streak: consecutive weeks (ending this week) where there are 4+ active days
+function computeWeeklyStreak() {
+  const completedDays = getAllCompletedDatesSet();
+  if (completedDays.size === 0) return 0;
+
+  const today = new Date();
+  let weekStart = startOfWeekDate(today);
+
+  let streak = 0;
+  while (true) {
+    // gather days in this week (Mon..Sun)
+    let activeDays = 0;
+    for (let i = 0; i < 7; i++) {
+      const d = new Date(weekStart);
+      d.setDate(weekStart.getDate() + i);
+      const ds = getISODate(d);
+      if (completedDays.has(ds)) activeDays++;
+    }
+    // majority threshold (4+ days) counts as an active week
+    if (activeDays >= 4) {
+      streak++;
+      // move to previous week
+      weekStart.setDate(weekStart.getDate() - 7);
+    } else {
+      break;
+    }
+  }
+
+  return streak;
 }
 
 /* Drag & Drop */
