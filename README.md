@@ -15,6 +15,3 @@ A minimalist habit tracking web app built with vanilla HTML, CSS, and JavaScript
 - CSS (custom properties for theming)
 - JavaScript
 - Git & GitHub
-
-## Live Demo
-[View it here](https://yourusername.github.io/habit-tracker/)
